@@ -1,5 +1,4 @@
 
-
 import base64
 import io
 from PIL import Image
@@ -8,79 +7,24 @@ import cv2
 
 import torch
 from torch import autocast
-from diffusers import StableDiffusionPipeline, StableDiffusionControlNetPipeline, StableDiffusionImg2ImgPipeline, DPMSolverMultistepScheduler, StableDiffusionDepth2ImgPipeline, UniPCMultistepScheduler
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, StableDiffusionPipeline, StableDiffusionControlNetPipeline, StableDiffusionImg2ImgPipeline, DPMSolverMultistepScheduler, StableDiffusionDepth2ImgPipeline, UniPCMultistepScheduler
 from diffusers.utils import load_image
 from pathlib import Path
 import openai
+from controlnet_aux import HEDdetector
+from diffusers.utils import load_image
 
-def init_canny_controlnet(local_model_path = "./control_TopdownBalanced_canny"):
-  canny_controlnet_pipe = StableDiffusionControlNetPipeline.from_pretrained(local_model_path).to("cuda")
-  canny_controlnet_pipe.safety_checker = lambda images, clip_input: (images, False)
-  canny_controlnet_pipe.scheduler = UniPCMultistepScheduler.from_config(canny_controlnet_pipe.scheduler.config)
-  return canny_controlnet_pipe
+def init_hed_controlnet(local_model_path = "./spritesheet_dreambooth_merge_kaliyuga_extract"):
+  controlnet = ControlNetModel.from_pretrained(
+      "fusing/stable-diffusion-v1-5-controlnet-hed", torch_dtype=torch.float16
+  )
 
-#device = "cuda" means that the model should go in the available GPU, we can
-#also make it go to a specific GPU if multiple GPUs are available.
-#Example: device = "cuda:2" would cause the model to load into GPU #3
-def init_model(local_model_path = "./stable-diffusion-2-depth", device = "cuda"):
+  pipe = StableDiffusionControlNetPipeline.from_pretrained(
+      local_model_path, controlnet=controlnet, safety_checker=None, torch_dtype=torch.float16
+  ).to('cuda')
 
-  #If the model is Depth assisted Img2Img model
-  if 'depth' in local_model_path:
-    pipe = StableDiffusionDepth2ImgPipeline.from_pretrained(
-    local_model_path,
-    torch_dtype=torch.float16
-    )
-    pipe = pipe.to(device)
-    return pipe
-  elif 'magenta' in local_model_path:
-    DPM_scheduler = DPMSolverMultistepScheduler(
-      beta_start=0.00085,
-      beta_end=0.012,
-      beta_schedule="scaled_linear",
-      num_train_timesteps=1000,
-      trained_betas=None,
-#       predict_epsilon=True,
-      thresholding=False,
-      algorithm_type="dpmsolver++",
-      solver_order=2,
-      solver_type="midpoint",
-      lower_order_final=True,
-    )
-    pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-      local_model_path,
-#       'magenta_model',
-      revision="fp16", 
-      scheduler = DPM_scheduler,
-      torch_dtype=torch.float16,
-      safety_checker=None
-    )
-    pipe = pipe.to(device)
-    return pipe
-
-  else:
-    #for `diffusers_summerstay_strdwvlly_asset_v2` model
-    #----------------------------------------
-    DPM_scheduler = DPMSolverMultistepScheduler(
-      beta_start=0.00085,
-      beta_end=0.012,
-      beta_schedule="scaled_linear",
-      num_train_timesteps=1000,
-      trained_betas=None,
-      predict_epsilon=True,
-      thresholding=False,
-      algorithm_type="dpmsolver++",
-      solver_type="midpoint",
-      lower_order_final=True,
-    )
-    pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-      local_model_path,
-      revision="fp16", 
-      scheduler = DPM_scheduler,
-      torch_dtype=torch.float16,
-      safety_checker=None
-    )
-    pipe = pipe.to(device)
-    return pipe
+  pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+  return pipe
 
 
 #'image_path' is a local path to the image
@@ -118,12 +62,11 @@ def load_image_generalised(image_path, resize = False):
 
 
 def inference(pipe, \
-              init_img,\
-              prompts = ["blue house", "blacksmith workshop"], \
-              strength: float = 0.90,\
+              hed_image,\
+              prompts = ["icy werewolf", "flame knight"], \
               num_inference_steps: int = 20,\
               guidance_scale: float =20,
-              negative_pmpt:str = "ugly, contrast, 3D",
+              negative_pmpt:str = None,
               req_type = "asset",
               device = "cuda",
               seed = None):
@@ -137,8 +80,7 @@ def inference(pipe, \
     # negative_pmpt = "isometric, interior, island, farm, monochrome, glowing, text, character, sky, UI, pixelated, blurry"
 
     #for `stable-diffusion-2-depth` model
-    adjs = [x.split()[0] for x in prompts]
-    prompts_postproc = [f'{prompt}, {adj} style, {adj} appearance, {adj}, pixel art' for prompt, adj in zip(prompts,adjs)]
+    prompts_postproc = [f'{prompt} spritesheettttt, right alignment, with a completely light green background' for prompt in zip(prompts)]
 
     if negative_pmpt is not None:  
       negative_prompt = [negative_pmpt for x in range(len(prompts_postproc))]
@@ -152,39 +94,13 @@ def inference(pipe, \
 
     with autocast("cuda"):
         images = pipe(prompt=prompts_postproc,\
+                    hed_image,
                     negative_prompt = negative_prompt,\
-                    image=init_img, 
-                    strength=strength, 
                     num_inference_steps = num_inference_steps,
                     guidance_scale=guidance_scale,
                     generator = generator)
     images = images[0]
-  else:
-    prompts = [x.replace('tile', 'texture') for x in prompts]
-    prompts_postproc = [f'{prompt}, studio ghibli style, cartoon style, smlss style' for prompt in prompts]
 
-    if negative_pmpt is not None:  
-      negative_prompt = [negative_pmpt for x in range(len(prompts_postproc))]
-    else:
-      negative_prompt = ["isometric, interior, island, farm, monochrome, glowing, text, character, sky, UI, pixelated, blurry" for x in range(len(prompts_postproc))]
-      
-    # print(prompts_postproc[0], '!!!!!!!!!!\n', prompts_postproc[1])
-
-    generator = None
-    if seed is not None:
-      generator = torch.Generator(device=device).manual_seed(seed)
-
-    with autocast("cuda"):
-        images = pipe(prompt=prompts_postproc,\
-                    negative_prompt = negative_prompt,\
-                    image=init_img, 
-                    strength=strength, 
-                    num_inference_steps = num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    generator = generator)
-    images = images[0]
-    #images = [x.resize((64,64),0).resize((512,512),0) for x in images]
-      
   #Returns a List of PIL Images
   return images
 
