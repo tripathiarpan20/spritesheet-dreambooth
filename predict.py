@@ -2,8 +2,8 @@
 # https://github.com/replicate/cog/blob/main/docs/python.md
 
 from cog import BasePredictor, BaseModel, File, Input, Path
-from base import init_model, make_background_magenta, load_image_generalised, inference, inference_w_gpt, inference_with_edge_guidance, init_hed_controlnet
-from postprocess import cut, cutv2, cut_magenta, splitHeightTo2, splitImageTo9, img2b4
+from base import load_image_generalised, inference, init_hed_controlnet
+from postprocess import splitHeightTo2, splitImageTo9, img2b4, cleanImage_wrapper
 from PIL import Image
 
 
@@ -58,13 +58,9 @@ class Predictor(BasePredictor):
         guidance_scale: float = Input(description="Prompt Guidance strength/Classifier Free Generation strength of Stable Diffusion", default=7.5),
         split : str = Input(description="Decide which split needs to happen", default="none"),
         req_type: str = Input(description="Describes whether the request is for an object asset or a tile", default="asset"),
-        negative_prompt: str = Input(description="Negative_Prompt", default="base, ground, terrain, child's drawing, sillhouette, dark, shadowed, green blob, cast shadow on the ground, background pattern"),
+        negative_prompt: str = Input(description="Negative_Prompt", default=""),
         num_inference_steps: int = Input(description="Number of denoising steps", default = 20),
-        # cut_inner_tol:int = Input(description="Inner tolerance in `cutv2` strongest component PNG masking ", default = 7),
-        outer_tol:int = Input(description="Outer tolerance in `cutv2` strongest component PNG masking ", default = 80),
-        # cut_radius:int = Input(description="Radius in `cutv2` strongest component PNG masking ", default = 70),
         sd_seed:int = Input(description="Seed for SD generations for getting deterministic outputs", default = None),
-        erode_width:int = Input(description="Canny BG Removal argument", default = 5),
         width:int = Input(description="Width for returning output image", default = None),
         height:int = Input(description="Height for returning output image", default = None)
     ) -> Any:
@@ -99,7 +95,7 @@ class Predictor(BasePredictor):
                 for gen_image in images:
                     # images_.append(cutv2(gen_image, init_img, outer_tolerance = cut_outer_tol, inner_tolerance = cut_inner_tol, radius = cut_radius))
                     # images_.append(cut_magenta(gen_image, outer_tol))
-                    images_.append(make_background_magenta(gen_image, init_img , erode_width))
+                    images_.append(cleanImage_wrapper(gen_image))
             else:
                 for image in images:
                     images_.append(image)
